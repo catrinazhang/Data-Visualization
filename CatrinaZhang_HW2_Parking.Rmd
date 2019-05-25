@@ -1,0 +1,428 @@
+---
+title: "Homework 2 Parking"
+author: "Catrina Zhang"
+date: 2019-03-15
+output: 
+  html_document:
+    keep_md: true
+  html_notebook: default
+---
+
+```{r Setup, include=FALSE, results='hide', warning=FALSE}
+library(knitr)
+
+opts_chunk$set(fig.path="figures/",
+                   cache.path="cache/",
+                   cache=FALSE,
+                   echo=TRUE,
+                   message=FALSE,
+                   warning=FALSE)  
+```
+
+## Assignment Setup
+In this section, I will be loading the package and data required for the assignment.
+```{r, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(tidyverse)
+library(gridExtra)
+library(rvest)
+library(stringr)
+library(plotly)
+library(DT)
+library(devtools)
+library(readr)
+library(leaflet)
+
+parkingNYC=read_csv("parkingNYC_jan2019.csv")
+violationcodes=read_csv("parkingNYC_ParkingViolationCodes_Nov_2018.csv")
+violationcodes = violationcodes[-1,]
+```
+## a) Violation Code and Fine Amounts
+
+Add the violation code descriptions and fine amounts to the data file. Provide a visual overview of the top 10 most common types of violations (feel free to group them into categories if reasonable). Compare how this ranking differs if we focus on the total amount of revenue generated.
+
+I chose bar graphs to show these. For both the total violations and total amount of revenue generated, "no-standing/daytime limits" topped the chart. However, the position of 2 and 3 were swapped between the two graphs. It can also be noted that no-standing/daytime limits was almost twice as profitable as any other violations, but this is not as apparent in the total violations. Overall, the offenses were quite similar between the two.
+```{r Q1_a} 
+
+violationcodes <- violationcodes %>% 
+  mutate(`VIOLATION CODE` = as.numeric(`VIOLATION CODE`))
+
+parking = full_join(parkingNYC, violationcodes, by = c('Violation Code'='VIOLATION CODE'))
+
+colnames(parking)[6] <- "VC"
+colnames(parking)[48:49] <- c("VD", "Fine")
+colnames(parking)[15] <- "VP"
+
+parking2 <- parking %>%
+  group_by(VC, VD, Fine) %>% 
+  summarize(violations = length(VC))
+
+parking2$revenue <- parking2$violations * parking2$Fine / 1000
+
+parking3 <- parking2 %>% 
+  arrange(desc(violations)) %>% 
+  head(10)
+
+parking4 <- parking2 %>% 
+  arrange(desc(revenue)) %>% 
+  head(10)
+
+TotalViolations <-
+  ggplot(data = parking3, aes(x=reorder(VD, violations), y=violations, fill = violations)) +
+  geom_bar(stat = "identity") + 
+  labs(title = "Top 10 Violations",
+       subtitle = "By Number of Violations",
+       x = "Violation Description", y = "# of Violations") +
+  theme(legend.position = "none") +
+  coord_flip()
+
+TotalViolations
+
+RevenueViolations <-
+  ggplot(data = parking4, aes(x=reorder(VD, revenue), y=revenue, fill = revenue)) +
+  geom_bar(stat = "identity") + 
+  labs(title = "Top 10 Violations",
+       subtitle = "By Total Revenue (in Thousands of Dollars)",
+       x = "Violation Description", y = "Total Revenue (000's)") +
+  theme(legend.position = "none") +
+  coord_flip()
+
+RevenueViolations
+
+```
+
+b) Average amount of fine by vehicle
+Compare the average amount of fine by vehicle color, vehicle year, and vehicle plate type [Hint: it is sufficient to restrict your attention to commercial (COM) and passenger (PAS) vehicles]? Briefly describe your findings.
+
+The average fine by commercial and passenger vehicles are very similar. For the vehicle color, I grouped together some of the common color. For vehicle year, there are some vehicles that had futuer years, I simply did not include them in the results. For all three plots, the bar colors are based on the average fine amount. It seems that vehicles made between 1980 and 2000 have the highest average fines, and brown and white colored vehicles have the highest average fines.
+```{r Q1_b}
+parkingb <- parking %>% 
+  select(`Plate Type`, `Vehicle Color`, `Vehicle Year`, Fine)
+
+colnames(parkingb) <- c("PT", "VColor", "VY", "Fine")
+
+parkingb_0 <- parkingb %>% 
+  mutate(VColor=replace(VColor, VColor == "BLK"|VColor == "BK"|VColor == "BL" , "BLACK"), 
+         VColor=replace(VColor, VColor == "GY"|VColor == "GRY"|VColor == "GR/" , "GREY"),
+         VColor=replace(VColor, VColor == "BR"|VColor == "BRN"|VColor == "BRO"|VColor == "BRW", "BROWN"),
+         VColor=replace(VColor, VColor == "YEL"|VColor == "YELLO"|VColor == "YLLW"|VColor == "YL"|VColor == "YE", "YELLOW"),
+         VColor=replace(VColor, VColor == "OR", "ORANGE"),
+         VColor=replace(VColor, VColor == "WHI", "WHITE"),
+         VColor=replace(VColor, VColor == "R"|VColor == "RD/"|VColor == "RD" , "RED"),
+         VColor=replace(VColor, VColor == "GREE", "GREEN"))
+
+parkingPT <- parkingb_0 %>%
+  group_by(PT, Fine) %>% 
+  summarize(Freq = length(Fine)) %>% 
+  filter(PT == "PAS" | PT == 'COM')
+
+parkingPT <- na.omit(parkingPT)
+parkingPT$revenue <- parkingPT$Fine * parkingPT$Freq
+
+parkingPT <- parkingPT %>% group_by(PT) %>%
+  summarize(sumFreq = sum(Freq),
+            sumRevenue = sum(revenue))
+
+parkingPT$avgFine <- parkingPT$sumRevenue / parkingPT$sumFreq
+
+finebyPT <-
+  ggplot(data = parkingPT, aes(x=PT, y=avgFine, fill = avgFine)) +
+  geom_bar(stat = "identity") + 
+  labs(title = "Average Fine by Plate Type ($)",
+       x = "Plate Type", y = "Average Fine") +
+  theme(legend.position = "none")
+
+finebyPT
+
+## Year
+parkingVY <- parkingb_0 %>%
+  group_by(VY, Fine) %>% 
+  summarize(Freq = length(Fine)) %>% 
+  filter(VY > 0 & VY < 2020)
+
+parkingVY <- na.omit(parkingVY)
+parkingVY$revenue <- parkingVY$Fine * parkingVY$Freq
+
+parkingVY <- parkingVY %>% group_by(VY) %>%
+  summarize(sumFreq = sum(Freq),
+            sumRevenue = sum(revenue))
+
+parkingVY$avgFine <- parkingVY$sumRevenue / parkingVY$sumFreq
+
+parkingVY <-
+  ggplot(data = parkingVY, aes(x=VY, y=avgFine, fill = avgFine)) +
+  geom_bar(stat = "identity") + 
+  labs(title = "Average Fine by Vehicle Year ($)",
+       x = "Vehicle Year", y = "Average Fine") +
+  theme(legend.position = "none")
+
+parkingVY
+
+parkingVC <- na.omit(parkingb_0)
+
+vc <- c('BROWN', 'GREY', 'BLACK', 'RED', 'WHITE', 'ORANGE', 'YELLOW', 'BLUE')
+
+parkingVC1 <- filter(parkingVC, VColor %in% vc)
+
+parkingVC2 <- parkingVC1 %>%
+  group_by(VColor, Fine) %>% 
+  summarize(Freq = length(Fine))
+
+parkingVC2$revenue <- parkingVC2$Fine * parkingVC2$Freq
+
+parkingVC3 <- parkingVC2 %>% group_by(VColor) %>%
+  summarize(sumFreq = sum(Freq),
+            sumRevenue = sum(revenue))
+
+parkingVC3$avgFine <- parkingVC3$sumRevenue / parkingVC3$sumFreq
+
+parkingVCplot <-
+  ggplot(data = parkingVC3, aes(x=VColor, y=avgFine, fill = avgFine)) +
+  geom_bar(stat = "identity") + 
+  labs(title = "Average Fine by Vehicle Color ($)",
+       x = "Vehicle Color", y = "Average Fine") +
+  theme(legend.position = "none")
+
+parkingVCplot
+
+
+```
+
+##2. Map by Precincts
+Read in the shape files for the police precincts and remove all precincts outside of Manhattan.
+```{r Q2,  results='hide', warning=FALSE}
+library('rgdal')
+precincts <- readOGR(".", "nypp")
+
+precincts2 <- subset(precincts, Precinct == c(1,5,6,7,9,10,13,14,17,18,19,20,22,23,24,25,26,28,30,32,33,34))
+
+precincts3 <- spTransform(precincts2, 
+                          CRS("+proj=longlat +datum=WGS84"))
+
+precincts4 <- fortify(precincts3)
+
+precincts5 <- precincts4 %>% 
+  mutate(id_new = ifelse(id == 21, 34,ifelse(id == 20, 33,ifelse(id == 19, 32,ifelse(id == 18, 30,
+  ifelse(id == 17, 28, ifelse(id == 16, 26, ifelse(id == 15, 25, ifelse(id == 14, 24, ifelse(id == 13, 23,
+  ifelse(id == 12, 22, ifelse(id == 11, 20, ifelse(id == 10, 19, ifelse(id == 9, 18, ifelse(id == 8, 17, ifelse(id == 7, 14, ifelse(id == 6, 13, ifelse(id == 5, 13, ifelse(id == 4, 9, ifelse(id == 3, 7, ifelse(id == 2, 6, ifelse(id == 1, 5, 1))))))))))))))))))))))
+
+```
+
+
+a) Number of tickets, total fines, and average fines
+Provide three maps that show choropleth maps of:
+
+the total number of tickets
+the total amount of fines
+the average amount of fines
+Briefly describe what you learn from these maps in comparison.
+
+I used different shades of pink to represent the amounts - the darker the color, the larger the number. Overall, the precincts on the east and immediately south of Central Park resulted in the highest total number of ticket, total amount of fines and average amount of fines. As expected, the total number of tickets and total fines maps were quite similar in terms of which precincts had higher number of violations/fines. The average amount of fines graph was slightly different, in that the precincts directly south of Central Park had the highest average amount of fines, and some precincts in the north also had higher averages as well, whereas  those precincts did not appear high on the first two maps. 
+```{r Q1_b_cont}
+library(ggmap)
+
+parkingmap <- parking %>%
+  select(VP, Fine)
+
+parkingmap <- na.omit(parkingmap)
+
+parkingmap2 <- parkingmap %>%
+  group_by(VP) %>% 
+  summarize(violations = length(VP))
+
+precinct <- precincts5 %>% 
+  select(long, lat, id, group, id_new) %>% 
+  unique()
+
+parkingmap4 <- parkingmap %>%
+  group_by(VP) %>% 
+  summarize(revenue = sum(Fine)/1000)
+
+parkingmap3 <- inner_join(parkingmap2, parkingmap4, by = 'VP')
+
+parkingmap3$avgrev <- parkingmap3$revenue / parkingmap3$violations * 1000
+
+parkingmap5 <- inner_join(parkingmap3, precinct, by = c('VP'='id_new'))
+
+maptickets <- ggplot(parkingmap5, 
+    aes(x = long, y = lat, group=group)) + scale_fill_gradientn(colours=c("pink","pink2","violetred1"))+
+    geom_polygon(aes(fill = violations), color="white")+ggtitle("Total Amount of Tickets by Precinct")
+
+maptickets
+
+maprevs <- ggplot(parkingmap5, 
+    aes(x = long, y = lat, group=group)) + scale_fill_gradientn(colours=c("pink","pink2","violetred1"))+
+    geom_polygon(aes(fill = revenue), color="white")+ggtitle("Total Revenue by Precinct ($000s)")
+
+maprevs
+
+mapavg <- ggplot(parkingmap5, 
+    aes(x = long, y = lat, group=group)) + scale_fill_gradientn(colours=c("pink","pink2","violetred1"))+
+    geom_polygon(aes(fill = avgrev), color="white")+ggtitle("Average Amount of Fines by Precinct")
+
+mapavg
+
+```
+
+b) Types of violations
+Group the almost 100 types of ticket violations into a smaller set of 4-6 subgroups (where other should be the remainder of violations not included in other groups you defined). [Hint: No need to spend more than 5 minutes thinking about what the right grouping is.]. Provide choropleth maps for each of these subgroups to show where different types of violations are more or less common.
+
+I did the subgraphs based on whether the violations are major, high intermediate, low intermediate, or minor (based on the amount of fines).
+```{r Q2b}
+
+parkingv <- parking %>%
+  select(VC, VD, Fine, VP)
+
+colnames(parkingv) <- c("VC", "VD", "Fine", "VP")
+
+parkingv <- na.omit(parkingv)
+
+parkingv2 <- parkingv %>% 
+  mutate(fineCat = ifelse(Fine > 95, "MAJOR", ifelse(Fine == 95, "HIGH INTERMEDIATE",ifelse(Fine == 65, "LOW INTERMEDIATE", ifelse(Fine > 0, "MINOR", "OTHER")))))
+
+parkingv3 <- parkingv2 %>%
+  group_by(VP, fineCat) %>% 
+  summarize(freq = length(fineCat))
+
+parkingv4 <- inner_join(parkingv3, precinct, by = c('VP'='id_new'))
+
+mapmajor <- parkingv4 %>% 
+  filter(fineCat == "MAJOR") %>% 
+  ggplot(aes(x = long, y = lat, group=group)) +
+  scale_fill_gradientn(colours=c("pink","pink2","violetred1"))+
+  geom_polygon(aes(fill = freq), color="white")+
+  labs(title = "Major Violations by Precinct",
+       subtitle = "Fine >= $95",
+       x = "longitude", y = "latitude") 
+
+mapmajor
+
+maphint <- parkingv4 %>% 
+  filter(fineCat == "HIGH INTERMEDIATE") %>% 
+  ggplot(aes(x = long, y = lat, group=group)) +
+  scale_fill_gradientn(colours=c("pink","pink2","violetred1"))+
+  geom_polygon(aes(fill = freq), color="white") +
+  labs(title = "High Intermediate Violations by Precinct",
+       subtitle = "Fine = $95",
+       x = "longitude", y = "latitude") 
+
+maphint
+
+maplint <- parkingv4 %>% 
+  filter(fineCat == "LOW INTERMEDIATE") %>% 
+  ggplot(aes(x = long, y = lat, group=group)) +
+  scale_fill_gradientn(colours=c("pink","pink2","violetred1"))+
+  geom_polygon(aes(fill = freq), color="white") +
+  labs(title = "Low Intermediate Violations by Precinct",
+       subtitle = "Fine = $65",
+       x = "longitude", y = "latitude") 
+
+maplint
+
+mapminor <- parkingv4 %>% 
+  filter(fineCat == "MINOR") %>% 
+  ggplot(aes(x = long, y = lat, group=group)) +
+  scale_fill_gradientn(colours=c("pink","pink2","violetred1"))+
+  geom_polygon(aes(fill = freq), color="white") +
+  labs(title = "Minor Violations by Precinct",
+       subtitle = "Fine < $65",
+       x = "longitude", y = "latitude") 
+
+mapminor
+```
+
+##3. Focus on the Upper East
+Precinct 19 identifies the Upper East Side. The data currently does not provide latitude and longitude of the violation locations (and I am not sure what these street_code variables are for).
+
+a) Ignoring fire hydrants
+Restrict your data to parking violations related to fire hydrants (Violation Code = 40). Using the variables Street Name and House Number as well as the knowledge that these addresses are in the Upper East Side of Manhattan, geocode at least 500 addresses. Include a data table of these addresses and the latitude and longitude of these addresses in the output.
+```{r Q3_a,  message = FALSE, warning=FALSE}
+parkingue <- parking %>%
+  select(VP, VC, `House Number`, `Street Name`, `Vehicle Make`, issue_date, `Plate Type`, `Plate ID`) %>% 
+  filter(VP == 19 & VC == 40)
+
+colnames(parkingue) <- c("VP", "VC", "HNum", "StName", "VM", "Date", "PT", "PID")
+
+parkingue2 <- parkingue %>% 
+  head(500)
+
+parkingue2$address <- paste(parkingue2$HNum, parkingue2$StName, "Upper East Manhattan NY")
+geocodes <- geocode(parkingue2$address, output = "latlon" , source = "google")
+
+parkingue3 <- cbind(parkingue2, geocodes)
+parkingue3 <- parkingue3[5:11]
+parkingue4 <- parkingue3[,5:7]
+
+```
+Datatable
+```{r}
+datatable(parkingue4)
+```
+
+b) Interactive Map
+Provide an interactive map of the violations you geocoded using leaflet. Provide at least three pieces of information on the parking ticket in a popup.
+```{r Q3_b}
+
+mapint <- leaflet(parkingue3) %>%
+  addTiles() %>%  
+  addCircles(lng = ~ lon, lat = ~ lat)
+
+content <- paste("When:",parkingue3$Date,"<br/>",
+                 "Vehicle Make:",parkingue3$VM,"<br/>",
+                 "Plate Type:",parkingue3$PT,"<br/>")
+
+popmap <- mapint %>% addCircles(color="red", popup = content) 
+
+popmap
+```
+
+c) Luxury cars and repeat offenders
+Using the vehicle Plate ID, identify repeat offenders (in the full dataset). Create another variable called luxury_car in which you identify luxury car brands using the Vehicle Make variable.
+
+Start with the previous map. Distinguish the points by whether the car is a repeat offender and/or luxury car. Add a legend informing the user about the color scheme. Also make sure that the added information about the car type and repeat offender status is now contained in the popup information. Show this map.
+
+I designated a group of cars as luxury cars based on my own knowledge as well as Google. Repeat offenders are defined as those who have more than one entry on the list. 
+```{r Q4_c}
+luxury <- parking %>% 
+  select(`Vehicle Make`, `Plate ID`)
+
+luxury <- na.omit(luxury)
+
+colnames(luxury) <- c("VM", "PID")
+
+luxury2 <- luxury %>%
+  group_by(VM, PID) %>% 
+  summarize(freq = length(PID))
+
+luxury2$repeated <- ifelse(luxury2$freq > 1, "YES", "NO")
+
+luxury2$luxury_car <- ifelse(luxury2$VM %in% c("ACU", "ACUR", "ACURA", "AUDI", "BENTL", "BMW", "CADI", "CADIL", "FERRA", "INFI", "INFIN","JAGUA", "LEXUS", "LINC", "LINCO", "MASE", "PORSC", "TESLA"), "YES", "NO")
+
+luxury3 <- merge(parkingue3, luxury2, by = c("PID", "VM"))
+
+palette = colorFactor("Set1", domain = luxury3$repeated) # Grab a palette
+colorscheme = palette(luxury3$repeated)
+
+popmap %>% addCircles(color = colorscheme)
+
+content2 <- paste("When:",luxury3$Date,"<br/>",
+                 "Vehicle Make:",luxury3$VM,"<br/>",
+                 "Plate Type:",luxury3$PT,"<br/>",
+                 "Repeated Offender:",luxury3$repeated,"<br/>",
+                 "Luxury Car:",luxury3$luxury_car,"<br/>")
+
+popmap2 <- popmap %>% addCircles(color=colorscheme, popup = content2) %>%
+  addLegend(pal = palette, values = ~luxury3$repeated, title = "Repeated Offenders")
+
+popmap2
+```
+
+d) Cluster
+Add marker clustering, so that zooming in will reveal the individual locations but the zoomed out map only shows the clusters. Show the map with clusters.
+```{r Q3_d}
+parkingcluster <- popmap2 %>% addCircleMarkers(color = colorscheme, 
+                       popup = content2,
+                       clusterOptions = markerClusterOptions())
+
+parkingcluster
+```

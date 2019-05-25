@@ -1,0 +1,294 @@
+---
+title: "Homework 1 Olympics"
+author: "Catrina Zhang"
+date: 2019-02-22
+output: 
+  html_document:
+    keep_md: true
+---
+
+```{r Setup, include=FALSE, results='hide', warning=FALSE}
+library(knitr)
+
+opts_chunk$set(fig.path="figures/",
+                   cache.path="cache/",
+                   cache=FALSE,
+                   echo=TRUE,
+                   message=FALSE,
+                   warning=FALSE)  
+```
+
+## Assignment Setup
+In this section, I will be loading the package and data required for the assignment.
+```{r, results = 'hide', warnings = FALSE}
+library(ggplot2)
+library(tidyverse)
+library(gridExtra)
+library(rvest)
+library(stringr)
+library(plotly)
+library(DT)
+
+setwd("~/")
+noc_region=read_csv("noc_regions.csv")
+gdp_pop=read_csv("gdp_pop.csv")
+a_e=read_csv("athletes_and_events.csv")
+```
+## Q1 Medal Counts over Time
+a) Here I combined noc region, GDP and athletes and events tables. I have identified serveral countries that have different NOCs, I combined URS and EUN into RUS (Russia) and SAA, FRG, and GDR as GER (Germany). I also relabeled SIN as SGP (Singapore) and ANZ as AUS (Australia) to make them consistent for joining, and relabelled the region corresponding to HKG as Hong Kong (previously China). 
+```{r Q1_a} 
+noc_region <- noc_region %>% 
+  mutate(NOC=replace(NOC, NOC == "URS"|NOC == "EUN", "RUS"), 
+         NOC=replace(NOC, NOC == "SAA"|NOC == "FRG"|NOC == "GDR", "GER"),
+         NOC=replace(NOC, NOC == "SIN", "SGP"),
+         NOC=replace(NOC, NOC == "ANZ", "AUS"),
+         region=replace(region, NOC == "HKG", "Hong Kong")) %>% 
+  unique()
+
+a_e <- a_e %>%
+  mutate(NOC=replace(NOC, NOC == "URS"|NOC == "EUN", "RUS"), 
+         NOC=replace(NOC, NOC == "SAA"|NOC == "FRG"|NOC == "GDR", "GER")) %>% 
+  unique()
+
+joined = full_join(noc_region, gdp_pop, by = c('NOC'='Code'))
+joined <- joined %>% 
+  select(NOC, region, Population, `GDP per Capita`) %>% 
+  distinct()
+
+colnames(joined) <- c("NOC", "Region", "Population", "GDPPerCapita")
+
+olympics <- inner_join(x = a_e, y = joined, by = "NOC")
+
+```
+
+b) Here I created a summary of how many Summer Games each country competed in and the number of medals of each type was won, selecting the top 10 NOCs in terms of number of Games participated in for the table so as to not overwhelm the reader. 
+```{r Q1_b}
+participation <- olympics[!is.na(olympics$Medal), ]
+
+participationSummer <- participation[which(participation$Season=="Summer"),]
+participationSummerAll <- olympics[which(olympics$Season=="Summer"),]
+
+participationByCountry <- data.frame(table(unique(data.frame(participationSummerAll$NOC,participationSummerAll$Year))$participationSummerAll.NOC))
+
+colnames(participationByCountry) <- c("NOC", "NumberOfGames")
+
+NOCMedals <- participationSummer %>% 
+  select(NOC, Year, Medal)
+
+NOCMedals2 <- NOCMedals %>%
+  group_by(NOC,Medal) %>%
+summarize(medals = length(Medal))
+NOCMedals2 <- NOCMedals2 %>% 
+  spread(Medal, medals)
+
+gamesMedals <- left_join(x = participationByCountry, y = NOCMedals2, by = "NOC") %>% 
+  arrange(desc(NumberOfGames)) %>% 
+  head(10)
+
+gamesMedals
+```
+b cont) I also created two visualizations, graph A showing the total medal count split by type of medal for the top 10 medal-winning NOCs, as well as graph B showing an over-time comparison of total medals won by the top 10 medal-winning NOCs, split by sex, from 1980 to 2016. I would recommend graph A to the reader as it provides a very informative view of the total number of medals won by the top 10 medal-winning NOCs, as well as the medal split by type. While graph B is informative an we can clearly see a trend of females winning more medals in more recent years, it does not show which NOCs are the major contributors to this phenomenon. 
+```{r Q1_b_cont}
+contingency <- data.frame(table(participation$NOC))
+contingencySummer <- data.frame(table(participationSummer$NOC))
+subsetContingency <- (head((contingencySummer[order(-contingencySummer$Freq),]), n = 10))[,1]
+
+object <- data.frame(table(participationSummer$NOC, participationSummer$Medal))
+colnames(object) <- c("NOC", "medal", "count")
+
+temps <- filter(object, NOC %in% subsetContingency)
+
+medalsByColor <-
+  ggplot(data = temps, aes(x=reorder(NOC, desc(count)), y=count, fill = medal)) +
+  geom_bar(stat = "identity") + 
+  scale_fill_manual(values = c("Gold" = "gold", "Silver" = "#a09a95", "Bronze" = "#dd842c")) +
+  xlab("NOC") +
+  ylab("Numbers of Medals") +
+  ggtitle("Top 10 Medal Winning NOCs, Summer Games")
+
+medalsByColor
+
+object2 <- data.frame(table(participationSummer$NOC, participationSummer$Year))
+temps4 <- filter(object2, Var1 %in% subsetContingency, Var2 %in% c(1980:2016))
+
+participationTop10 <- filter(participationSummer, NOC %in% subsetContingency)
+
+medalsOverTime <- data.frame(table(participationTop10$Year, participationTop10$Sex))
+
+medalsSummary <- medalsOverTime %>% 
+  mutate(Var1 = as.numeric(as.character(Var1))) %>% 
+  filter(Var1 > 1979)
+
+colnames(medalsSummary) <- c("Year", "Sex", "Count")
+
+medalGenderPlot <-
+  ggplot(data = medalsSummary, aes(x=Year, y=Count, group = Sex, color = Sex)) +
+  geom_line() + 
+  geom_point() +
+  xlab("Year") +
+  ylab("Total Numbers of Medals") +
+  ggtitle("Total Medals for Top 10 Medal Winning NOCs, Summer Games") + 
+  scale_x_continuous(breaks = seq(1980, 2016, by = 4))
+
+medalGenderPlot
+```
+
+##Q2 Medal Count Adjusted by Population and GDP
+Here I created 3 graphs, based on aggregate (Gold, Silver, and Bronze) medals for the top 10 medal winning NOCs. Note that this is based on both Summer and Winter Games, whereas Q1 is only Summer.
+graph A shows the total number of medals won by the top 10 medal-winning NOCs
+graph B is adjusted by population, we can see that SWE and HUN really stood out because these are small countries with a small population, whereas USA came out at the bottom since it has a huge population compared with most of the other countries on the list
+graph C is adjusted by GDP, we can see that RUS leads in this graph as it is the only developing country on the list with relativey low GDP.
+
+I did not use a multiplier/scaling factor for GDP or population because I only want to show the relative standing for each country. 
+```{r Q2}
+joined2 = merge(contingency, joined, by.x ='Var1', by.y = 'NOC')
+
+medalsPopGDP <- joined2 %>% 
+  na.omit() %>% 
+  mutate(populationM = Freq/Population,
+         GDPM = Freq/GDPPerCapita) %>% 
+  arrange(desc(Freq)) %>% 
+  head(10)
+
+medalPlot <-
+  ggplot(data = medalsPopGDP, aes(x=reorder(Var1, desc(Freq)), y=Freq, fill = Var1)) +
+  geom_bar(stat = "identity") + 
+  labs(title = "Top 10 Medal Winning NOCs",
+       x = "NOC", y = "Medals") +
+  theme(legend.position = "none")
+
+medalPlot3 <-
+  ggplot(data = medalsPopGDP, aes(x=reorder(Var1, desc(Freq)), y=populationM, fill = Var1)) +
+  geom_bar(stat = "identity") + 
+  labs(title = "Top 10 Medal Winning NOCs",
+       subtitle = "Adjusted by Population",
+       x = "NOC", y = "Medals") +
+  theme(legend.position = "none")
+  
+medalPlot4 <-
+  ggplot(data = medalsPopGDP, aes(x=reorder(Var1, desc(Freq)), y=GDPM, fill = Var1)) +
+  geom_bar(stat = "identity") + 
+  labs(title = "Top 10 Medal Winning NOCs",
+       subtitle = "Adjusted by GDP",
+       x = "NOC", y = "Medals") +
+  theme(legend.position = "none")
+
+grid.arrange(medalPlot, medalPlot3, medalPlot4, nrow = 3)
+```
+
+##Q3 Host Country Advantage
+To perform the data cleaning, I manually changed the names of countries in order to match up with country names in the csv files.
+
+Here I created a plot showing each NOC that has hosted the Olympics from from 1980 to 2016, the blue point shows the average number of medals won per Game when the NOC is hosting the Olympics, and the red point shows the average number of medals won per Game when the NOC is not hosting. I only included medal information from 1980 to 2016 since the number of medals won in the very distant past (e.g. 1896) is less relevant as a basic of comparison since both the number of participants and disciplines are very different from today. I also only included medals won during Summer Games to be consistent with the Wikipedia table. 
+
+It looks like there is a host country advantage considering every single NOC received more medals on average during Games when they were host than when they were not. 
+
+```{r Q3}
+wiki_hosts <- read_html("https://en.wikipedia.org/wiki/Summer_Olympic_Games")
+hosts <- html_table(html_nodes(wiki_hosts, "table")[[8]], fill=TRUE)
+hosts <- hosts[-1,1:3]
+hosts$city <- str_split_fixed(hosts$Host, n=2, ",")[,1]
+hosts$country <- str_split_fixed(hosts$Host, n=2, ",")[,2]
+hosts$country <-trimws(hosts$country,"l")
+
+hosts <- hosts[-c(6,12,13),]
+hosts <- hosts %>% 
+  mutate(country=replace(country, country == "California, United States"|country == "California, United States[30]"|country == "United States", "USA"), 
+         country=replace(country, country == "France[30]", "France"),
+         country=replace(country, country == "United Kingdom", "UK"),
+         country=replace(country, country == "Soviet Union", "Russia"),
+         country=replace(country, country == "West Germany", "Germany")) %>% 
+  left_join(noc_region, by = c('country'='region')) 
+
+countryMedal <- data.frame(table(participationSummer$Year, participationSummer$NOC)) %>% 
+  mutate(Var1 = as.numeric(as.character(Var1)), host = "No")
+
+for (i in 1:nrow(hosts)){
+  countryMedal <- countryMedal %>% 
+    mutate(host = replace(host, Var1 == hosts$Year[i] & Var2 == hosts$NOC[i], "Yes"))
+}
+
+colnames(countryMedal) <- c("Year", "NOC", "Count", "Host")
+
+countryMedalSummary <- countryMedal %>% 
+  filter(Year > 1979) %>% 
+  group_by(NOC, Host) %>% 
+  summarize(average = mean(Count)) %>% 
+  ungroup() %>% 
+  mutate(NOC = factor(NOC), Host = factor(Host)) %>% 
+  filter(NOC %in% hosts$NOC[22:33])
+
+hostPlot <-
+  ggplot(data = countryMedalSummary, mapping = aes(x=average, y = NOC, colour = Host)) +
+  geom_point(size = 3) +
+  xlab("Average Number of Medals") +
+  ylab("NOC") +
+  ggtitle("Host Country Advantage")
+
+hostPlot
+```
+
+##Q4 Most Successful Athletes
+a) Here I am showing the top 10 "most successful" athletes of all time, which I have defined as having the highest total number of medals won. We can see that Michael Phelps came up on top with 28 medals won, and that 7 out of the top 10 most successful athletes are males. 
+```{r Q4_a}
+successPre <- 
+  participation %>%
+  group_by(Name) %>%
+  mutate(totalMedals = length(Medal)) %>%
+  arrange(desc(totalMedals)) %>%
+  ungroup() %>%
+  select(Sport, NOC, Name, Sex, totalMedals) %>%
+  unique()
+  
+successA <- successPre %>% 
+  arrange(desc(totalMedals)) %>% 
+  head(10)
+
+athletesPlot <-
+  ggplot(data = successA, aes(x=reorder(Name, totalMedals), y=totalMedals)) +
+  geom_bar(stat = "identity", aes(fill = Sex)) + 
+  xlab("Name") +
+  ylab("Medals Won") +
+  ggtitle("Top 10 Most Successful Athletes") +
+  scale_y_continuous(breaks = seq(0, 30, by = 2)) +
+  coord_flip()
+
+athletesPlot
+```
+
+b) Here I am showing the most successful athletes in Badminton, by NOC. We can see that all of the top 10 athletes are from Asian countries, with most being from CHN (China) or KOR (Korea). 
+```{r Q4_b}
+badminton <- successPre %>% 
+  filter(Sport == "Badminton") %>% 
+  arrange(desc(totalMedals)) %>% 
+  head(10)
+
+badmintonPlot <-
+  ggplot(data = badminton, aes(x=reorder(Name, totalMedals), y=totalMedals, color = NOC)) +
+  geom_bar(stat = "identity", aes(fill = NOC)) + 
+  xlab("Name") +
+  ylab("Medals Won") +
+  ggtitle("Successful Athletes in Badminton by NOC based on Total Medals") +
+  scale_y_continuous(breaks = seq(0, 8, by = 1)) +
+  coord_flip()
+
+badmintonPlot
+```
+
+##Q5 Interactivity
+Here I made two interactive plots, graph A is the host country advantage, graph B is the number of medals won by type for the top 10 medal-winning NOCs.
+
+I chose to show the host country advantage plot so the user can see the exact number of average medals won (since the scale is in increments of 100). The total medals won by medal type plot is chosen so the user can hover over specific medal colors and see more details. 
+```{r Q5}
+ggplotly(hostPlot)
+ggplotly(medalsByColor)
+```
+
+##Q6 Data Table 
+Here I made a data table of the top 100 most successful athletes, ranked by number of medals won. You can search for the athlete, or sort by sport, NOC, name, sex and total medals won. I chose this data table because it's simple to understand and provides a lot of useful information. 
+```{r Q6}
+
+datatable(head(successPre, 100), options = list(
+  order = list(5,'desc')
+))
+```

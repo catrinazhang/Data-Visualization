@@ -1,3 +1,3 @@
-Final group project for Data Visualization 
+# Final group project for Data Visualization 
 
 Site: https://teddycat.shinyapps.io/speeddating/
